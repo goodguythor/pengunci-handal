@@ -65,16 +65,41 @@ impl FileEncryptor {
                 }
             }
             Message::Encrypt => {
-                let mut file = File::open(&self.file_path).expect("Failed to open file");
+                if self.file_path.is_empty() {
+                    eprintln!("Error: File path is empty.");
+                    return;
+                }
+
+                if self.password.is_empty() {
+                    eprintln!("Error: Password is empty.");
+                    return;
+                }
+
+                let mut file = match File::open(&self.file_path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("Failed to open file: {}", e);
+                        return;
+                    }
+                };
                 let output_path = format!("{}.enc", &self.file_path);
-                let mut encrypted_file = File::create(&output_path).expect("Failed to create encrypted file");
+                let mut encrypted_file = match File::create(&output_path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("Failed to create encrypted file: {}", e);
+                        return;
+                    }
+                };
 
                 let mut src = Vec::new();
                 file.read_to_end(&mut src).expect("Failed to read file");
 
                 let mut nonce_bytes = [0u8; XCHACHA_NONCESIZE];
                 OsRng.try_fill_bytes(&mut nonce_bytes);
-                encrypted_file.write_all(&nonce_bytes).expect("Failed to write nonce");
+                if let Err(e) = encrypted_file.write_all(&nonce_bytes) {
+                    eprintln!("Failed to write nonce: {}", e);
+                    return;
+                }
 
                 let pass = Password::from_slice(self.password.as_bytes()).unwrap();
                 let salt = Salt::from_slice(&nonce_bytes).unwrap();
@@ -98,19 +123,53 @@ impl FileEncryptor {
                         &mut output[ad.len()..],
                     ).expect("Encryption failed");
 
-                    encrypted_file.write_all(&output).expect("Failed to write encrypted chunk");
+                    if let Err(e) = encrypted_file.write_all(&output) {
+                        eprintln!("Failed to write encrypted chunk: {}", e);
+                        return;
+                    }
                 }
 
                 self.file_path.clear();
                 self.password.clear();
             }
             Message::Decrypt => {
-                let mut file = File::open(&self.file_path).expect("Failed to open file");
-                let output_path = self.file_path.replace(".enc", ".dec");
-                let mut decrypted_file = File::create(&output_path).expect("Failed to create decrypted file");
+                if self.file_path.is_empty() {
+                    eprintln!("Error: File path is empty.");
+                    return;
+                }
+
+                if self.password.is_empty() {
+                    eprintln!("Error: Password is empty.");
+                    return;
+                }
+
+                let mut file = match File::open(&self.file_path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("Failed to open file: {}", e);
+                        return;
+                    }
+                };
+                let output_path = if let Some(stripped) = self.file_path.strip_suffix(".enc") {
+                    stripped.to_string()
+                } 
+                else {
+                    eprintln!("Error: The selected file is not an .enc file.");
+                    return;
+                };
+                let mut decrypted_file = match File::create(&output_path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("Failed to create decrypted file: {}", e);
+                        return;
+                    }
+                };
 
                 let mut src = Vec::new();
-                file.read_to_end(&mut src).expect("Failed to read encrypted file");
+                if let Err(e) = file.read_to_end(&mut src) {
+                    eprintln!("Failed to read encrypted file: {}", e);
+                    return;
+                }
 
                 let nonce_bytes = &src[..XCHACHA_NONCESIZE];
                 let encrypted_data = &src[XCHACHA_NONCESIZE..];
@@ -134,7 +193,10 @@ impl FileEncryptor {
                     open(&key, &nonce, ciphertext, Some(ad), &mut output)
                         .expect("Decryption failed");
 
-                    decrypted_file.write_all(&output).expect("Failed to write decrypted chunk");
+                    if let Err(e) = decrypted_file.write_all(&output) {
+                        eprintln!("Failed to write decrypted chunk: {}", e);
+                        return;
+                    }
                 }
 
                 self.file_path.clear();
