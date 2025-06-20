@@ -2,6 +2,7 @@
 pub enum Message {
     PathChanged(String),
     PasswordChanged(String),
+    ChangeTab(bool),
     Encrypt,
     Decrypt,
     Browse,
@@ -20,11 +21,17 @@ use iced::widget::{button, column, row, text, text_input, Column};
 struct FileEncryptor {
     file_path: String,
     password: String,
+    error_message: Option<String>,
+    decrypt: bool,
 }
 
 impl FileEncryptor {
     pub fn view(&self) -> Column<Message> {
         column![
+            row![
+                button("Encrypt File").on_press(Message::ChangeTab(false)),
+                button("Decrypt File").on_press(Message::ChangeTab(true)),
+            ],
             text("Pengunci Handal")
                 .size(64)
                 .width(iced::Length::Fill)
@@ -44,10 +51,12 @@ impl FileEncryptor {
                     .on_input(Message::PasswordChanged)
                     .padding(10),
             ],
-            row![
-                button("Encrypt").on_press(Message::Encrypt),
-                button("Decrypt").on_press(Message::Decrypt),
-            ],
+            if self.decrypt == false {
+                button("Encrypt").on_press(Message::Encrypt)
+            } 
+            else {
+                button("Decrypt").on_press(Message::Decrypt)
+            }
         ]
     }
 
@@ -58,6 +67,9 @@ impl FileEncryptor {
             }
             Message::PasswordChanged(content) => {
                 self.password = content;
+            }
+            Message::ChangeTab(condition) => {
+                self.decrypt = condition;
             }
             Message::Browse => {
                 if let Some(path) = rfd::FileDialog::new().pick_file() {
@@ -92,7 +104,10 @@ impl FileEncryptor {
                 };
 
                 let mut src = Vec::new();
-                file.read_to_end(&mut src).expect("Failed to read file");
+                if let Err(e) = file.read_to_end(&mut src) {
+                    eprintln!("Failed to read file: {}", e);
+                    return;
+                }
 
                 let mut nonce_bytes = [0u8; XCHACHA_NONCESIZE];
                 OsRng.try_fill_bytes(&mut nonce_bytes);
@@ -115,13 +130,18 @@ impl FileEncryptor {
                     let mut output = vec![0u8; ad.len() + POLY1305_OUTSIZE + chunk.len()];
                     output[..ad.len()].copy_from_slice(&ad);
 
-                    seal(
+                    let seal_result = seal(
                         &key,
                         &nonce,
                         chunk,
                         Some(&ad),
                         &mut output[ad.len()..],
-                    ).expect("Encryption failed");
+                    );
+
+                    if let Err(e) = seal_result {
+                        eprintln!("Encryption failed: {:?}", e);
+                        return;
+                    }
 
                     if let Err(e) = encrypted_file.write_all(&output) {
                         eprintln!("Failed to write encrypted chunk: {}", e);
@@ -190,8 +210,13 @@ impl FileEncryptor {
                     let (ad, ciphertext) = chunk.split_at(ad_len);
                     let mut output = vec![0u8; ciphertext.len() - POLY1305_OUTSIZE];
 
-                    open(&key, &nonce, ciphertext, Some(ad), &mut output)
-                        .expect("Decryption failed");
+                    match open(&key, &nonce, ciphertext, Some(ad), &mut output) {
+                        Ok(_) => {},
+                        Err(err) => {
+                            eprintln!("Decryption failed: {:?}", err);
+                            return;
+                        }
+                    }
 
                     if let Err(e) = decrypted_file.write_all(&output) {
                         eprintln!("Failed to write decrypted chunk: {}", e);
