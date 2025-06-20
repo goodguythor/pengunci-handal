@@ -3,6 +3,7 @@ pub enum Message {
     PathChanged(String),
     PasswordChanged(String),
     ChangeTab(bool),
+    Close,
     Encrypt,
     Decrypt,
     Browse,
@@ -15,13 +16,13 @@ use orion::hazardous::{
 use orion::hazardous::stream::chacha20::CHACHA_KEYSIZE;
 use orion::kdf::{derive_key, Password, Salt};
 use rand_core::{OsRng, TryRngCore};
-use iced::widget::{button, column, row, text, text_input, Column};
+use iced::widget::{button, column, row, text, text_input, container, Column, Space};
 
 #[derive(Default)]
 struct FileEncryptor {
     file_path: String,
     password: String,
-    error_message: Option<String>,
+    error_message: String,
     decrypt: bool,
 }
 
@@ -53,10 +54,25 @@ impl FileEncryptor {
             ],
             if self.decrypt == false {
                 button("Encrypt").on_press(Message::Encrypt)
+            } else {
+                button("Decrypt").on_press(Message::Decrypt)
+            },
+            if !self.error_message.is_empty() {
+                container(
+                    row![
+                        text(format!("{}", self.error_message)),
+                        button("Ok").on_press(Message::Close)
+                    ]
+                )
+                .padding(10)
             } 
             else {
-                button("Decrypt").on_press(Message::Decrypt)
-            }
+                container(
+                    row![
+                        
+                    ]
+                )
+            },
         ]
     }
 
@@ -71,6 +87,9 @@ impl FileEncryptor {
             Message::ChangeTab(condition) => {
                 self.decrypt = condition;
             }
+            Message::Close => {
+                self.error_message.clear();
+            }
             Message::Browse => {
                 if let Some(path) = rfd::FileDialog::new().pick_file() {
                     self.file_path = path.display().to_string();
@@ -78,19 +97,22 @@ impl FileEncryptor {
             }
             Message::Encrypt => {
                 if self.file_path.is_empty() {
-                    eprintln!("Error: File path is empty.");
+                    self.error_message = "Error: File path is empty.".to_string();
+                    eprintln!("{}", self.error_message);
                     return;
                 }
 
                 if self.password.is_empty() {
-                    eprintln!("Error: Password is empty.");
+                    self.error_message = "Error: Password is empty.".to_string();
+                    eprintln!("{}", self.error_message);
                     return;
                 }
 
                 let mut file = match File::open(&self.file_path) {
                     Ok(f) => f,
                     Err(e) => {
-                        eprintln!("Failed to open file: {}", e);
+                        self.error_message = format!("Failed to open file: {}", e);
+                        eprintln!("{}", self.error_message);
                         return;
                     }
                 };
@@ -98,21 +120,24 @@ impl FileEncryptor {
                 let mut encrypted_file = match File::create(&output_path) {
                     Ok(f) => f,
                     Err(e) => {
-                        eprintln!("Failed to create encrypted file: {}", e);
+                        self.error_message = format!("Failed to create encrypted file: {}", e);
+                        eprintln!("{}", self.error_message);
                         return;
                     }
                 };
 
                 let mut src = Vec::new();
                 if let Err(e) = file.read_to_end(&mut src) {
-                    eprintln!("Failed to read file: {}", e);
+                    self.error_message = format!("Failed to read file: {}", e);
+                    eprintln!("{}", self.error_message);
                     return;
                 }
 
                 let mut nonce_bytes = [0u8; XCHACHA_NONCESIZE];
                 OsRng.try_fill_bytes(&mut nonce_bytes);
                 if let Err(e) = encrypted_file.write_all(&nonce_bytes) {
-                    eprintln!("Failed to write nonce: {}", e);
+                    self.error_message = format!("Failed to write nonce: {}", e);
+                    eprintln!("{}", self.error_message);
                     return;
                 }
 
@@ -139,12 +164,14 @@ impl FileEncryptor {
                     );
 
                     if let Err(e) = seal_result {
-                        eprintln!("Encryption failed: {:?}", e);
+                        self.error_message = format!("Encryption failed: {}", e);
+                        eprintln!("{}", self.error_message);
                         return;
                     }
 
                     if let Err(e) = encrypted_file.write_all(&output) {
-                        eprintln!("Failed to write encrypted chunk: {}", e);
+                        self.error_message = format!("Failed to write encrypted chunk: {}", e);
+                        eprintln!("{}", self.error_message);
                         return;
                     }
                 }
@@ -154,19 +181,22 @@ impl FileEncryptor {
             }
             Message::Decrypt => {
                 if self.file_path.is_empty() {
-                    eprintln!("Error: File path is empty.");
+                    self.error_message = "Error: File path is empty.".to_string();
+                    eprintln!("{}", self.error_message);
                     return;
                 }
 
                 if self.password.is_empty() {
-                    eprintln!("Error: Password is empty.");
+                    self.error_message = "Error: Password is empty.".to_string();
+                    eprintln!("{}", self.error_message);
                     return;
                 }
 
                 let mut file = match File::open(&self.file_path) {
                     Ok(f) => f,
                     Err(e) => {
-                        eprintln!("Failed to open file: {}", e);
+                        self.error_message = format!("Failed to open file: {}", e);
+                        eprintln!("{}", self.error_message);
                         return;
                     }
                 };
@@ -174,20 +204,23 @@ impl FileEncryptor {
                     stripped.to_string()
                 } 
                 else {
-                    eprintln!("Error: The selected file is not an .enc file.");
+                    self.error_message = "Error: The selected file is not an .enc file.".to_string();
+                    eprintln!("{}", self.error_message);
                     return;
                 };
                 let mut decrypted_file = match File::create(&output_path) {
                     Ok(f) => f,
                     Err(e) => {
-                        eprintln!("Failed to create decrypted file: {}", e);
+                        self.error_message = format!("Failed to create decrypted file: {}", e);
+                        eprintln!("{}", self.error_message);
                         return;
                     }
                 };
 
                 let mut src = Vec::new();
                 if let Err(e) = file.read_to_end(&mut src) {
-                    eprintln!("Failed to read encrypted file: {}", e);
+                    self.error_message = format!("Failed to create encrypted file: {}", e);
+                    eprintln!("{}", self.error_message);
                     return;
                 }
 
@@ -212,14 +245,16 @@ impl FileEncryptor {
 
                     match open(&key, &nonce, ciphertext, Some(ad), &mut output) {
                         Ok(_) => {},
-                        Err(err) => {
-                            eprintln!("Decryption failed: {:?}", err);
+                        Err(e) => {
+                            self.error_message = format!("Decryption failed: {} (wrong password)", e);
+                            eprintln!("{}", self.error_message);
                             return;
                         }
                     }
 
                     if let Err(e) = decrypted_file.write_all(&output) {
-                        eprintln!("Failed to write decrypted chunk: {}", e);
+                        self.error_message = format!("Failed to write decrypted chunk: {}", e);
+                        eprintln!("{}", self.error_message);
                         return;
                     }
                 }
